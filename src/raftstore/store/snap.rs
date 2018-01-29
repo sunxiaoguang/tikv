@@ -891,7 +891,6 @@ impl Snapshot for Snap {
             {
                 let mut file = cf_file.file.take().unwrap();
                 file.flush()?;
-                file.sync_all()?;
             }
             if cf_file.written_size != cf_file.size {
                 return Err(io::Error::new(
@@ -929,11 +928,7 @@ impl Snapshot for Snap {
         // write meta file
         let mut v = vec![];
         self.meta_file.meta.write_to_vec(&mut v)?;
-        {
-            let mut meta_file = self.meta_file.file.take().unwrap();
-            meta_file.write_all(&v[..])?;
-            meta_file.sync_all()?;
-        }
+        self.meta_file.file.take().unwrap().write_all(&v[..])?;
         fs::rename(&self.meta_file.tmp_path, &self.meta_file.path)?;
         Ok(())
     }
