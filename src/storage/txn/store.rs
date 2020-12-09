@@ -273,14 +273,18 @@ impl<S: Snapshot> Store for SnapshotStore<S> {
             .bypass_locks(self.bypass_locks.clone())
             .build()?;
 
+        let keys = order_and_keys.iter().map(|p| p.1);
+        let original_order = order_and_keys.iter().map(|p| p.0);
+        let result = point_getter.batch_get(order_and_keys.iter().map(|p| p.1))?;
         let mut values: Vec<MaybeUninit<Element>> = Vec::with_capacity(keys.len());
         for _ in 0..keys.len() {
             values.push(MaybeUninit::uninit());
         }
-        for (original_order, key) in order_and_keys {
-            let value = point_getter.get(key).map_err(Error::from);
+        for (original_order, value) in original_order.zip(result) {
             unsafe {
-                values[original_order].as_mut_ptr().write(value);
+                values[original_order]
+                    .as_mut_ptr()
+                    .write(value.map_err(From::from));
             }
         }
 

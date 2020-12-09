@@ -4,6 +4,7 @@ use crate::storage::kv::{Cursor, CursorBuilder, ScanMode, Snapshot, Statistics};
 use crate::storage::mvcc::{default_not_found_error, NewerTsCheckState, Result};
 use engine_traits::{CF_DEFAULT, CF_LOCK, CF_WRITE};
 use kvproto::kvrpcpb::IsolationLevel;
+use std::iter::Iterator;
 use txn_types::{Key, Lock, TimeStamp, TsSet, Value, WriteRef, WriteType};
 
 /// `PointGetter` factory.
@@ -107,6 +108,7 @@ impl<S: Snapshot> PointGetterBuilder<S> {
         Ok(PointGetter {
             snapshot: self.snapshot,
             multi: self.multi,
+            fill_cache: self.fill_cache,
             omit_value: self.omit_value,
             isolation_level: self.isolation_level,
             ts: self.ts,
@@ -133,6 +135,7 @@ impl<S: Snapshot> PointGetterBuilder<S> {
 pub struct PointGetter<S: Snapshot> {
     snapshot: S,
     multi: bool,
+    fill_cache: bool,
     omit_value: bool,
     isolation_level: IsolationLevel,
     ts: TimeStamp,
@@ -185,6 +188,99 @@ impl<S: Snapshot> PointGetter<S> {
         }
 
         self.load_data(user_key)
+    }
+
+    /// Get the values of user keys
+    ///
+    /// If `multi == false`, this function must be called only once. Future calls return nothing.
+    pub fn batch_get<'a>(
+        &mut self,
+        user_keys: impl Iterator<Item = &'a Key>,
+    ) -> Result<Vec<Result<Option<Value>>>> {
+        if !self.multi {
+            // Protect from calling `batch_get()` multiple times when `multi == false`.
+            if self.drained {
+                return Ok(vec![]);
+            } else {
+                self.drained = true;
+            }
+        }
+        match self.isolation_level {
+            IsolationLevel::Si => self.batch_get_si(user_keys),
+            IsolationLevel::Rc => self.batch_get_rc(user_keys),
+        }
+    }
+
+    fn batch_get_si_check_lock<'a>(
+        &mut self,
+        mut lock_cursor: Cursor<S::Iter>,
+        user_keys: impl Iterator<Item = &'a Key>,
+    ) -> Vec<(&'a Key, Result<Option<Value>>)> {
+        user_keys
+            .map(|key| {
+                self.statistics.lock.seek += 1;
+                let seek = lock_cursor.seek(key, &mut self.statistics.lock);
+                match seek {
+                    Err(e) => return (key, Err(From::from(e))),
+                    Ok(lock_exist) => {
+                        if lock_exist {
+                            self.statistics.lock.processed += 1;
+                            let lock =
+                                match Lock::parse(lock_cursor.value(&mut self.statistics.lock)) {
+                                    Err(e) => return (key, Err(From::from(e))),
+                                    Ok(l) => l,
+                                };
+                            if self.met_newer_ts_data == NewerTsCheckState::NotMetYet {
+                                self.met_newer_ts_data = NewerTsCheckState::Met
+                            }
+                            match lock.check_ts_conflict(key, self.ts, &self.bypass_locks) {
+                                Err(e) => return (key, Err(From::from(e))),
+                                Ok(_) => (),
+                            };
+                        }
+                    }
+                }
+                (key, Ok(None))
+            })
+            .collect()
+    }
+
+    fn batch_get_si_load_data<'a>(
+        &mut self,
+        user_keys: Vec<(&'a Key, Result<Option<Value>>)>,
+    ) -> Vec<Result<Option<Value>>> {
+        user_keys
+            .into_iter()
+            .map(|p| match p.1 {
+                Ok(_) => self.load_data(p.0),
+                Err(e) => Err(e),
+            })
+            .collect()
+    }
+
+    fn batch_get_si<'a>(
+        &mut self,
+        user_keys: impl Iterator<Item = &'a Key>,
+    ) -> Result<Vec<Result<Option<Value>>>> {
+        let cursor = CursorBuilder::new(&self.snapshot, CF_LOCK)
+            .fill_cache(self.fill_cache)
+            .prefix_seek(!self.multi)
+            .scan_mode(if self.multi {
+                ScanMode::Mixed
+            } else {
+                ScanMode::Forward
+            })
+            .build()?;
+
+        let check_result = self.batch_get_si_check_lock(cursor, user_keys);
+        Ok(self.batch_get_si_load_data(check_result))
+    }
+
+    fn batch_get_rc<'a>(
+        &mut self,
+        user_keys: impl Iterator<Item = &'a Key>,
+    ) -> Result<Vec<Result<Option<Value>>>> {
+        Ok(user_keys.map(|k| self.load_data(k)).collect())
     }
 
     /// Get a lock of a user key in the lock CF. If lock exists, it will be checked to
