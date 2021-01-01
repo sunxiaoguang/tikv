@@ -34,7 +34,10 @@ use engine_rocks::{
     DEFAULT_PROP_SIZE_INDEX_DISTANCE,
 };
 use engine_traits::{CFOptionsExt, ColumnFamilyOptions as ColumnFamilyOptionsTrait, DBOptionsExt};
-use engine_traits::{CF_DEFAULT, CF_LOCK, CF_RAFT, CF_VER_DEFAULT, CF_WRITE};
+use engine_traits::{
+    CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_VER_DEFAULT,
+    CF_WRITE,
+};
 use keys::region_raft_prefix_len;
 use pd_client::Config as PdConfig;
 use raft_log_engine::RaftEngineConfig as RawRaftEngineConfig;
@@ -76,6 +79,9 @@ fn memory_mb_for_cf(is_raft_db: bool, cf: &str) -> usize {
         (false, CF_LOCK) => (0.02, LOCKCF_MIN_MEM, LOCKCF_MAX_MEM),
         (false, CF_WRITE) => (0.15, 0, usize::MAX),
         (false, CF_VER_DEFAULT) => (0.25, 0, usize::MAX),
+        (false, CF_RAW_DEFAULT) => (0.25, 0, usize::MAX),
+        (false, CF_RAW_LOCK) => (0.25, LOCKCF_MIN_MEM, LOCKCF_MAX_MEM),
+        (false, CF_RAW_WRITE) => (0.25, 0, usize::MAX),
         _ => unreachable!(),
     };
     let mut size = (total_mem as f64 * ratio) as usize;
@@ -860,6 +866,245 @@ impl VersionCfConfig {
     }
 }
 
+cf_config!(RawDefaultCfConfig);
+
+impl Default for RawDefaultCfConfig {
+    fn default() -> RawDefaultCfConfig {
+        RawDefaultCfConfig {
+            block_size: ReadableSize::kb(64),
+            block_cache_size: ReadableSize::mb(memory_mb_for_cf(false, CF_RAW_DEFAULT) as u64),
+            disable_block_cache: false,
+            cache_index_and_filter_blocks: true,
+            pin_l0_filter_and_index_blocks: true,
+            use_bloom_filter: true,
+            optimize_filters_for_hits: true,
+            whole_key_filtering: true,
+            bloom_filter_bits_per_key: 10,
+            block_based_bloom_filter: false,
+            read_amp_bytes_per_bit: 0,
+            compression_per_level: [
+                DBCompressionType::No,
+                DBCompressionType::No,
+                DBCompressionType::Lz4,
+                DBCompressionType::Lz4,
+                DBCompressionType::Lz4,
+                DBCompressionType::Zstd,
+                DBCompressionType::Zstd,
+            ],
+            write_buffer_size: ReadableSize::mb(128),
+            max_write_buffer_number: 5,
+            min_write_buffer_number_to_merge: 1,
+            max_bytes_for_level_base: ReadableSize::mb(512),
+            target_file_size_base: ReadableSize::mb(8),
+            level0_file_num_compaction_trigger: 4,
+            level0_slowdown_writes_trigger: 20,
+            level0_stop_writes_trigger: 36,
+            max_compaction_bytes: ReadableSize::gb(2),
+            compaction_pri: CompactionPriority::MinOverlappingRatio,
+            dynamic_level_bytes: true,
+            num_levels: 7,
+            max_bytes_for_level_multiplier: 10,
+            compaction_style: DBCompactionStyle::Level,
+            disable_auto_compactions: false,
+            soft_pending_compaction_bytes_limit: ReadableSize::gb(64),
+            hard_pending_compaction_bytes_limit: ReadableSize::gb(256),
+            force_consistency_checks: true,
+            prop_size_index_distance: DEFAULT_PROP_SIZE_INDEX_DISTANCE,
+            prop_keys_index_distance: DEFAULT_PROP_KEYS_INDEX_DISTANCE,
+            enable_doubly_skiplist: true,
+            enable_compaction_guard: true,
+            compaction_guard_min_output_file_size: ReadableSize::mb(8),
+            compaction_guard_max_output_file_size: ReadableSize::mb(128),
+            titan: TitanCfConfig::default(),
+            bottommost_level_compression: DBCompressionType::Zstd,
+            bottommost_zstd_compression_dict_size: 0,
+            bottommost_zstd_compression_sample_size: 0,
+        }
+    }
+}
+
+impl RawDefaultCfConfig {
+    pub fn build_opt(
+        &self,
+        cache: &Option<Cache>,
+        region_info_accessor: Option<&RegionInfoAccessor>,
+    ) -> ColumnFamilyOptions {
+        let mut cf_opts = build_cf_opt!(self, CF_RAW_DEFAULT, cache, region_info_accessor);
+        let f = Box::new(RangePropertiesCollectorFactory {
+            prop_size_index_distance: self.prop_size_index_distance,
+            prop_keys_index_distance: self.prop_keys_index_distance,
+        });
+        cf_opts.add_table_properties_collector_factory("tikv.range-properties-collector", f);
+        cf_opts.set_titandb_options(&self.titan.build_opts());
+        cf_opts
+    }
+}
+
+cf_config!(RawWriteCfConfig);
+
+impl Default for RawWriteCfConfig {
+    fn default() -> RawWriteCfConfig {
+        // Setting blob_run_mode=read_only effectively disable Titan.
+        let mut titan = TitanCfConfig::default();
+        titan.blob_run_mode = BlobRunMode::ReadOnly;
+        RawWriteCfConfig {
+            block_size: ReadableSize::kb(64),
+            block_cache_size: ReadableSize::mb(memory_mb_for_cf(false, CF_RAW_WRITE) as u64),
+            disable_block_cache: false,
+            cache_index_and_filter_blocks: true,
+            pin_l0_filter_and_index_blocks: true,
+            use_bloom_filter: true,
+            optimize_filters_for_hits: false,
+            whole_key_filtering: false,
+            bloom_filter_bits_per_key: 10,
+            block_based_bloom_filter: false,
+            read_amp_bytes_per_bit: 0,
+            compression_per_level: [
+                DBCompressionType::No,
+                DBCompressionType::No,
+                DBCompressionType::Lz4,
+                DBCompressionType::Lz4,
+                DBCompressionType::Lz4,
+                DBCompressionType::Zstd,
+                DBCompressionType::Zstd,
+            ],
+            write_buffer_size: ReadableSize::mb(128),
+            max_write_buffer_number: 5,
+            min_write_buffer_number_to_merge: 1,
+            max_bytes_for_level_base: ReadableSize::mb(512),
+            target_file_size_base: ReadableSize::mb(8),
+            level0_file_num_compaction_trigger: 4,
+            level0_slowdown_writes_trigger: 20,
+            level0_stop_writes_trigger: 36,
+            max_compaction_bytes: ReadableSize::gb(2),
+            compaction_pri: CompactionPriority::MinOverlappingRatio,
+            dynamic_level_bytes: true,
+            num_levels: 7,
+            max_bytes_for_level_multiplier: 10,
+            compaction_style: DBCompactionStyle::Level,
+            disable_auto_compactions: false,
+            soft_pending_compaction_bytes_limit: ReadableSize::gb(64),
+            hard_pending_compaction_bytes_limit: ReadableSize::gb(256),
+            force_consistency_checks: true,
+            prop_size_index_distance: DEFAULT_PROP_SIZE_INDEX_DISTANCE,
+            prop_keys_index_distance: DEFAULT_PROP_KEYS_INDEX_DISTANCE,
+            enable_doubly_skiplist: true,
+            enable_compaction_guard: true,
+            compaction_guard_min_output_file_size: ReadableSize::mb(8),
+            compaction_guard_max_output_file_size: ReadableSize::mb(128),
+            titan,
+            bottommost_level_compression: DBCompressionType::Zstd,
+            bottommost_zstd_compression_dict_size: 0,
+            bottommost_zstd_compression_sample_size: 0,
+        }
+    }
+}
+
+impl RawWriteCfConfig {
+    pub fn build_opt(
+        &self,
+        cache: &Option<Cache>,
+        region_info_accessor: Option<&RegionInfoAccessor>,
+    ) -> ColumnFamilyOptions {
+        let mut cf_opts = build_cf_opt!(self, CF_RAW_WRITE, cache, region_info_accessor);
+        // Prefix extractor(trim the timestamp at tail) for write cf.
+        let e = Box::new(FixedSuffixSliceTransform::new(8));
+        cf_opts
+            .set_prefix_extractor("FixedSuffixSliceTransform", e)
+            .unwrap();
+        // Create prefix bloom filter for memtable.
+        cf_opts.set_memtable_prefix_bloom_size_ratio(0.1);
+        // Collects user defined properties.
+        let f = Box::new(MvccPropertiesCollectorFactory::default());
+        cf_opts.add_table_properties_collector_factory("tikv.mvcc-properties-collector", f);
+        let f = Box::new(RangePropertiesCollectorFactory {
+            prop_size_index_distance: self.prop_size_index_distance,
+            prop_keys_index_distance: self.prop_keys_index_distance,
+        });
+        cf_opts.add_table_properties_collector_factory("tikv.range-properties-collector", f);
+        cf_opts.set_titandb_options(&self.titan.build_opts());
+        cf_opts
+            .set_compaction_filter_factory(
+                "write_compaction_filter_factory",
+                Box::new(WriteCompactionFilterFactory {}) as Box<dyn CompactionFilterFactory>,
+            )
+            .unwrap();
+        cf_opts.set_titandb_options(&self.titan.build_opts());
+        cf_opts
+    }
+}
+
+cf_config!(RawLockCfConfig);
+
+impl Default for RawLockCfConfig {
+    fn default() -> RawLockCfConfig {
+        // Setting blob_run_mode=read_only effectively disable Titan.
+        let mut titan = TitanCfConfig::default();
+        titan.blob_run_mode = BlobRunMode::ReadOnly;
+        RawLockCfConfig {
+            block_size: ReadableSize::kb(16),
+            block_cache_size: ReadableSize::mb(memory_mb_for_cf(false, CF_RAW_LOCK) as u64),
+            disable_block_cache: false,
+            cache_index_and_filter_blocks: true,
+            pin_l0_filter_and_index_blocks: true,
+            use_bloom_filter: true,
+            optimize_filters_for_hits: false,
+            whole_key_filtering: true,
+            bloom_filter_bits_per_key: 10,
+            block_based_bloom_filter: false,
+            read_amp_bytes_per_bit: 0,
+            compression_per_level: [DBCompressionType::No; 7],
+            write_buffer_size: ReadableSize::mb(32),
+            max_write_buffer_number: 5,
+            min_write_buffer_number_to_merge: 1,
+            max_bytes_for_level_base: ReadableSize::mb(128),
+            target_file_size_base: ReadableSize::mb(8),
+            level0_file_num_compaction_trigger: 1,
+            level0_slowdown_writes_trigger: 20,
+            level0_stop_writes_trigger: 36,
+            max_compaction_bytes: ReadableSize::gb(2),
+            compaction_pri: CompactionPriority::ByCompensatedSize,
+            dynamic_level_bytes: true,
+            num_levels: 7,
+            max_bytes_for_level_multiplier: 10,
+            compaction_style: DBCompactionStyle::Level,
+            disable_auto_compactions: false,
+            soft_pending_compaction_bytes_limit: ReadableSize::gb(64),
+            hard_pending_compaction_bytes_limit: ReadableSize::gb(256),
+            force_consistency_checks: true,
+            prop_size_index_distance: DEFAULT_PROP_SIZE_INDEX_DISTANCE,
+            prop_keys_index_distance: DEFAULT_PROP_KEYS_INDEX_DISTANCE,
+            enable_doubly_skiplist: true,
+            enable_compaction_guard: false,
+            compaction_guard_min_output_file_size: ReadableSize::mb(8),
+            compaction_guard_max_output_file_size: ReadableSize::mb(128),
+            titan,
+            bottommost_level_compression: DBCompressionType::Disable,
+            bottommost_zstd_compression_dict_size: 0,
+            bottommost_zstd_compression_sample_size: 0,
+        }
+    }
+}
+
+impl RawLockCfConfig {
+    pub fn build_opt(&self, cache: &Option<Cache>) -> ColumnFamilyOptions {
+        let no_region_info_accessor: Option<&RegionInfoAccessor> = None;
+        let mut cf_opts = build_cf_opt!(self, CF_RAW_LOCK, cache, no_region_info_accessor);
+        let f = Box::new(NoopSliceTransform);
+        cf_opts
+            .set_prefix_extractor("NoopSliceTransform", f)
+            .unwrap();
+        let f = Box::new(RangePropertiesCollectorFactory {
+            prop_size_index_distance: self.prop_size_index_distance,
+            prop_keys_index_distance: self.prop_keys_index_distance,
+        });
+        cf_opts.add_table_properties_collector_factory("tikv.range-properties-collector", f);
+        cf_opts.set_memtable_prefix_bloom_size_ratio(0.1);
+        cf_opts.set_titandb_options(&self.titan.build_opts());
+        cf_opts
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
@@ -972,6 +1217,12 @@ pub struct DbConfig {
     pub raftcf: RaftCfConfig,
     #[config(submodule)]
     pub ver_defaultcf: VersionCfConfig,
+    #[config(submodule)]
+    pub raw_defaultcf: RawDefaultCfConfig,
+    #[config(submodule)]
+    pub raw_writecf: RawWriteCfConfig,
+    #[config(submodule)]
+    pub raw_lockcf: RawLockCfConfig,
     #[config(skip)]
     pub titan: TitanDBConfig,
 }
@@ -1019,6 +1270,9 @@ impl Default for DbConfig {
             lockcf: LockCfConfig::default(),
             raftcf: RaftCfConfig::default(),
             ver_defaultcf: VersionCfConfig::default(),
+            raw_defaultcf: RawDefaultCfConfig::default(),
+            raw_writecf: RawWriteCfConfig::default(),
+            raw_lockcf: RawLockCfConfig::default(),
             titan: titan_config,
         }
     }
@@ -1108,6 +1362,15 @@ impl DbConfig {
                 CF_VER_DEFAULT,
                 self.ver_defaultcf.build_opt(cache, region_info_accessor),
             ),
+            CFOptions::new(
+                CF_RAW_DEFAULT,
+                self.raw_defaultcf.build_opt(cache, region_info_accessor),
+            ),
+            CFOptions::new(CF_RAW_LOCK, self.raw_lockcf.build_opt(cache)),
+            CFOptions::new(
+                CF_RAW_WRITE,
+                self.raw_writecf.build_opt(cache, region_info_accessor),
+            ),
         ]
     }
 
@@ -1135,6 +1398,9 @@ impl DbConfig {
         write_into_metrics!(self.writecf, CF_WRITE, CONFIG_ROCKSDB_GAUGE);
         write_into_metrics!(self.raftcf, CF_RAFT, CONFIG_ROCKSDB_GAUGE);
         write_into_metrics!(self.ver_defaultcf, CF_VER_DEFAULT, CONFIG_ROCKSDB_GAUGE);
+        write_into_metrics!(self.raw_defaultcf, CF_RAW_DEFAULT, CONFIG_ROCKSDB_GAUGE);
+        write_into_metrics!(self.raw_lockcf, CF_RAW_LOCK, CONFIG_ROCKSDB_GAUGE);
+        write_into_metrics!(self.raw_writecf, CF_RAW_WRITE, CONFIG_ROCKSDB_GAUGE);
     }
 }
 
@@ -1506,6 +1772,9 @@ impl DBConfigManger {
             | (DBType::Kv, CF_LOCK)
             | (DBType::Kv, CF_RAFT)
             | (DBType::Kv, CF_VER_DEFAULT)
+            | (DBType::Kv, CF_RAW_DEFAULT)
+            | (DBType::Kv, CF_RAW_WRITE)
+            | (DBType::Kv, CF_RAW_LOCK)
             | (DBType::Raft, CF_DEFAULT) => Ok(()),
             _ => Err(format!("invalid cf {:?} for db {:?}", cf, self.db_type).into()),
         }

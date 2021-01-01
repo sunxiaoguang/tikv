@@ -13,7 +13,7 @@ use crate::server::Config as ServerConfig;
 use crate::storage::{config::Config as StorageConfig, Storage};
 use concurrency_manager::ConcurrencyManager;
 use engine_rocks::RocksEngine;
-use engine_traits::{Engines, Peekable, RaftEngine};
+use engine_traits::{set_safe_rawkv, Engines, Peekable, RaftEngine};
 use kvproto::metapb;
 use kvproto::raft_serverpb::StoreIdent;
 use kvproto::replication_modepb::ReplicationStatus;
@@ -174,7 +174,15 @@ where
 
         // Put store only if the cluster is bootstrapped.
         info!("put store to PD"; "store" => ?&self.store);
-        let status = self.pd_client.put_store(self.store.clone())?;
+        let (status, feature) = self.pd_client.put_store(self.store.clone())?;
+        set_safe_rawkv(
+            feature
+                .map(|f| {
+                    info!("cluster was bootstrapped with feature"; "feature" => ?&f);
+                    f.get_safe_rawkv()
+                })
+                .unwrap_or_default(),
+        );
         self.load_all_stores(status);
 
         self.start_store(

@@ -13,7 +13,7 @@ use futures::stream::{StreamExt, TryStreamExt};
 
 use grpcio::{CallOption, EnvBuilder, Environment, Result as GrpcResult, WriteFlags};
 use kvproto::metapb;
-use kvproto::pdpb::{self, Member};
+use kvproto::pdpb::{self, BootstrapFeature, Member};
 use kvproto::replication_modepb::{RegionReplicationStatus, ReplicationStatus};
 use security::SecurityManager;
 use tikv_util::time::duration_to_sec;
@@ -263,6 +263,10 @@ impl PdClient for RpcClient {
         req.set_store(stores);
         req.set_region(region);
 
+        let mut feature = pdpb::BootstrapFeature::default();
+        feature.set_safe_rawkv(true);
+        req.set_feature(feature);
+
         let mut resp = sync_request(&self.leader_client, LEADER_CHANGE_RETRY, |client| {
             client.bootstrap_opt(&req, Self::call_option())
         })?;
@@ -302,7 +306,10 @@ impl PdClient for RpcClient {
         Ok(resp.get_id())
     }
 
-    fn put_store(&self, store: metapb::Store) -> Result<Option<ReplicationStatus>> {
+    fn put_store(
+        &self,
+        store: metapb::Store,
+    ) -> Result<(Option<ReplicationStatus>, Option<BootstrapFeature>)> {
         let _timer = PD_REQUEST_HISTOGRAM_VEC
             .with_label_values(&["put_store"])
             .start_coarse_timer();
@@ -316,7 +323,7 @@ impl PdClient for RpcClient {
         })?;
         check_resp_header(resp.get_header())?;
 
-        Ok(resp.replication_status.take())
+        Ok((resp.replication_status.take(), resp.feature.take()))
     }
 
     fn get_store(&self, store_id: u64) -> Result<metapb::Store> {

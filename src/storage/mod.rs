@@ -70,7 +70,7 @@ use crate::storage::{
     types::StorageCallbackType,
 };
 use concurrency_manager::ConcurrencyManager;
-use engine_traits::{CfName, ALL_CFS, CF_DEFAULT, DATA_CFS};
+use engine_traits::{name_to_rawkv_cf, CfName, ALL_CFS, TXN_DATA_CFS};
 use engine_traits::{IterOptions, DATA_KEY_PREFIX_LEN};
 use futures::prelude::*;
 use kvproto::kvrpcpb::{CommandPri, Context, GetRequest, IsolationLevel, KeyRange, RawGetRequest};
@@ -744,8 +744,8 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         notify_only: bool,
         callback: Callback<()>,
     ) -> Result<()> {
-        let mut modifies = Vec::with_capacity(DATA_CFS.len());
-        for cf in DATA_CFS {
+        let mut modifies = Vec::with_capacity(TXN_DATA_CFS.len());
+        for cf in TXN_DATA_CFS {
             modifies.push(Modify::DeleteRange(
                 cf,
                 start_key.clone(),
@@ -765,11 +765,10 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
 
     fn raw_get_key_value<S: Snapshot>(
         snapshot: &S,
-        cf: String,
+        cf: CfName,
         key: Vec<u8>,
         stats: &mut Statistics,
     ) -> Result<Option<Vec<u8>>> {
-        let cf = Self::rawkv_cf(&cf)?;
         // no scan_count for this kind of op.
 
         let key_len = key.len();
@@ -794,6 +793,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         const CMD: CommandKind = CommandKind::raw_get;
         let priority = ctx.get_priority();
         let priority_tag = get_priority_tag(priority);
+        let rawkv_cf = self.rawkv_cf_checker();
 
         let res = self.read_pool.spawn_handle(
             async move {
@@ -814,7 +814,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                 {
                     let begin_instant = Instant::now_coarse();
                     let mut stats = Statistics::default();
-                    let r = Self::raw_get_key_value(&snapshot, cf, key, &mut stats);
+                    let r = Self::raw_get_key_value(&snapshot, rawkv_cf(&cf)?, key, &mut stats);
                     KV_COMMAND_KEYREAD_HISTOGRAM_STATIC.get(CMD).observe(1_f64);
                     tls_collect_read_flow(ctx.get_region_id(), &stats);
                     SCHED_PROCESSING_READ_HISTOGRAM_STATIC
@@ -845,6 +845,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         // all requests in a batch have the same region, epoch, term, replica_read
         let priority = gets[0].get_context().get_priority();
         let priority_tag = get_priority_tag(priority);
+        let rawkv_cf = self.rawkv_cf_checker();
         let res = self.read_pool.spawn_handle(
             async move {
                 for get in &gets {
@@ -877,7 +878,13 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                 let begin_instant = Instant::now_coarse();
                 for (mut req, snap) in snaps {
                     let ctx = req.take_context();
-                    let cf = req.take_cf();
+                    let cf = match rawkv_cf(req.get_cf()) {
+                        Ok(cf) => cf,
+                        Err(e) => {
+                            results.push(Err(e));
+                            continue;
+                        }
+                    };
                     let key = req.take_key();
                     match snap.await {
                         Ok(snapshot) => {
@@ -919,6 +926,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         let priority = ctx.get_priority();
         let priority_tag = get_priority_tag(priority);
 
+        let rawkv_cf_checker = self.rawkv_cf_checker();
         let res = self.read_pool.spawn_handle(
             async move {
                 let mut key_ranges = vec![];
@@ -942,7 +950,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                 {
                     let begin_instant = Instant::now_coarse();
                     let keys: Vec<Key> = keys.into_iter().map(Key::from_encoded).collect();
-                    let cf = Self::rawkv_cf(&cf)?;
+                    let cf = rawkv_cf_checker(&cf)?;
                     // no scan_count for this kind of op.
                     let mut stats = Statistics::default();
                     let result: Vec<Result<KvPair>> = keys
@@ -997,10 +1005,11 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
     ) -> Result<()> {
         check_key_size!(Some(&key).into_iter(), self.max_key_size, callback);
 
+        let rawkv_cf = self.rawkv_cf_checker();
         self.engine.async_write(
             &ctx,
             WriteData::from_modifies(vec![Modify::Put(
-                Self::rawkv_cf(&cf)?,
+                rawkv_cf(&cf)?,
                 Key::from_encoded(key),
                 value,
             )]),
@@ -1018,7 +1027,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         pairs: Vec<KvPair>,
         callback: Callback<()>,
     ) -> Result<()> {
-        let cf = Self::rawkv_cf(&cf)?;
+        let cf = self.rawkv_cf(&cf)?;
 
         check_key_size!(
             pairs.iter().map(|(ref k, _)| k),
@@ -1049,12 +1058,10 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
     ) -> Result<()> {
         check_key_size!(Some(&key).into_iter(), self.max_key_size, callback);
 
+        let rawkv_cf = self.rawkv_cf_checker();
         self.engine.async_write(
             &ctx,
-            WriteData::from_modifies(vec![Modify::Delete(
-                Self::rawkv_cf(&cf)?,
-                Key::from_encoded(key),
-            )]),
+            WriteData::from_modifies(vec![Modify::Delete(rawkv_cf(&cf)?, Key::from_encoded(key))]),
             Box::new(|(_, res): (_, kv::Result<_>)| callback(res.map_err(Error::from))),
         )?;
         KV_COMMAND_COUNTER_VEC_STATIC.raw_delete.inc();
@@ -1078,7 +1085,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
             callback
         );
 
-        let cf = Self::rawkv_cf(&cf)?;
+        let cf = self.rawkv_cf(&cf)?;
         let start_key = Key::from_encoded(start_key);
         let end_key = Key::from_encoded(end_key);
 
@@ -1099,7 +1106,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         keys: Vec<Vec<u8>>,
         callback: Callback<()>,
     ) -> Result<()> {
-        let cf = Self::rawkv_cf(&cf)?;
+        let cf = self.rawkv_cf(&cf)?;
         check_key_size!(keys.iter(), self.max_key_size, callback);
 
         let modifies = keys
@@ -1122,7 +1129,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
     /// keys will be returned.
     fn forward_raw_scan(
         snapshot: &E::Snap,
-        cf: &str,
+        cf: CfName,
         start_key: &Key,
         end_key: Option<Key>,
         limit: usize,
@@ -1136,7 +1143,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         if key_only {
             option.set_key_only(key_only);
         }
-        let mut cursor = snapshot.iter_cf(Self::rawkv_cf(cf)?, option, ScanMode::Forward)?;
+        let mut cursor = snapshot.iter_cf(cf, option, ScanMode::Forward)?;
         let statistics = statistics.mut_cf_statistics(cf);
         if !cursor.seek(start_key, statistics)? {
             return Ok(vec![]);
@@ -1163,7 +1170,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
     /// corresponding to the key will not be read out. Only scanned keys will be returned.
     fn reverse_raw_scan(
         snapshot: &E::Snap,
-        cf: &str,
+        cf: CfName,
         start_key: &Key,
         end_key: Option<Key>,
         limit: usize,
@@ -1177,7 +1184,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         if key_only {
             option.set_key_only(key_only);
         }
-        let mut cursor = snapshot.iter_cf(Self::rawkv_cf(cf)?, option, ScanMode::Backward)?;
+        let mut cursor = snapshot.iter_cf(cf, option, ScanMode::Backward)?;
         let statistics = statistics.mut_cf_statistics(cf);
         if !cursor.reverse_seek(start_key, statistics)? {
             return Ok(vec![]);
@@ -1220,6 +1227,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         const CMD: CommandKind = CommandKind::raw_scan;
         let priority = ctx.get_priority();
         let priority_tag = get_priority_tag(priority);
+        let rawkv_cf = self.rawkv_cf_checker();
 
         let res = self.read_pool.spawn_handle(
             async move {
@@ -1255,10 +1263,11 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                     let end_key = end_key.map(Key::from_encoded);
 
                     let mut statistics = Statistics::default();
+                    let cf = rawkv_cf(&cf)?;
                     let result = if reverse_scan {
                         Self::reverse_raw_scan(
                             &snapshot,
-                            &cf,
+                            cf,
                             &Key::from_encoded(start_key),
                             end_key,
                             limit,
@@ -1269,7 +1278,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                     } else {
                         Self::forward_raw_scan(
                             &snapshot,
-                            &cf,
+                            cf,
                             &Key::from_encoded(start_key),
                             end_key,
                             limit,
@@ -1307,16 +1316,16 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
     /// Check the given raw kv CF name. Return the CF name, or `Err` if given CF name is invalid.
     /// The CF name can be one of `"default"`, `"write"` and `"lock"`. If given `cf` is empty,
     /// `CF_DEFAULT` (`"default"`) will be returned.
-    fn rawkv_cf(cf: &str) -> Result<CfName> {
-        if cf.is_empty() {
-            return Ok(CF_DEFAULT);
-        }
-        for c in DATA_CFS {
-            if cf == *c {
-                return Ok(c);
-            }
-        }
-        Err(Error::from(ErrorInner::InvalidCf(cf.to_owned())))
+    fn rawkv_cf(&self, cf: &str) -> Result<CfName> {
+        name_to_rawkv_cf(cf).ok_or_else(|| Self::invalid_cf(cf))
+    }
+
+    fn rawkv_cf_checker(&self) -> impl Fn(&str) -> Result<CfName> {
+        move |cf| name_to_rawkv_cf(cf).ok_or_else(|| Self::invalid_cf(cf))
+    }
+
+    fn invalid_cf(name: &str) -> Error {
+        Error::from(ErrorInner::InvalidCf(name.to_owned()))
     }
 
     /// Check if key range is valid
@@ -1353,6 +1362,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         const CMD: CommandKind = CommandKind::raw_batch_scan;
         let priority = ctx.get_priority();
         let priority_tag = get_priority_tag(priority);
+        let rawkv_cf = self.rawkv_cf_checker();
 
         let res = self.read_pool.spawn_handle(
             async move {
@@ -1375,6 +1385,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                     };
                     let mut result = Vec::new();
                     let ranges_len = ranges.len();
+                    let cf = rawkv_cf(&cf)?;
                     for i in 0..ranges_len {
                         let start_key = Key::from_encoded(ranges[i].take_start_key());
                         let end_key = ranges[i].take_end_key();
@@ -1390,7 +1401,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                         let pairs = if reverse_scan {
                             Self::reverse_raw_scan(
                                 &snapshot,
-                                &cf,
+                                cf,
                                 &start_key,
                                 end_key,
                                 each_limit,
@@ -1400,7 +1411,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                         } else {
                             Self::forward_raw_scan(
                                 &snapshot,
-                                &cf,
+                                cf,
                                 &start_key,
                                 end_key,
                                 each_limit,
@@ -2257,6 +2268,15 @@ mod tests {
                 CFOptions::new(CF_LOCK, cfg_rocksdb.lockcf.build_opt(&cache)),
                 CFOptions::new(CF_WRITE, cfg_rocksdb.writecf.build_opt(&cache, None)),
                 CFOptions::new(CF_RAFT, cfg_rocksdb.raftcf.build_opt(&cache)),
+                CFOptions::new(
+                    CF_RAW_DEFAULT,
+                    cfg_rocksdb.raw_defaultcf.build_opt(&cache, None),
+                ),
+                CFOptions::new(CF_RAW_LOCK, cfg_rocksdb.raw_lockcf.build_opt(&cache)),
+                CFOptions::new(
+                    CF_RAW_WRITE,
+                    cfg_rocksdb.raw_writecf.build_opt(&cache, None),
+                ),
             ];
             RocksEngine::new(&path, &cfs, Some(cfs_opts), cache.is_some())
         }

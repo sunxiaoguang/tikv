@@ -79,6 +79,9 @@ make_auto_flush_static_metric! {
         default,
         lock,
         write,
+        raw_default,
+        raw_lock,
+        raw_write,
     }
 
     pub label_enum GcKeysDetail {

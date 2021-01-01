@@ -34,7 +34,7 @@ use std::ops::Deref;
 
 use futures::future::BoxFuture;
 use kvproto::metapb;
-use kvproto::pdpb;
+use kvproto::pdpb::{self, BootstrapFeature};
 use kvproto::replication_modepb::{RegionReplicationStatus, ReplicationStatus};
 use tikv_util::time::UnixSecs;
 use txn_types::TimeStamp;
@@ -119,7 +119,10 @@ pub trait PdClient: Send + Sync {
     }
 
     /// Informs PD when the store starts or some store information changes.
-    fn put_store(&self, _store: metapb::Store) -> Result<Option<ReplicationStatus>> {
+    fn put_store(
+        &self,
+        _store: metapb::Store,
+    ) -> Result<(Option<ReplicationStatus>, Option<BootstrapFeature>)> {
         unimplemented!();
     }
 

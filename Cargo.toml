@@ -286,3 +286,6 @@ incremental = false
 debug-assertions = false
 overflow-checks = false
 rpath = false
+
+[patch.'https://github.com/pingcap/kvproto.git']
+kvproto = { git = "https://github.com/sunxiaoguang/kvproto.git", branch = "safe_rawkv_on_tikv_master" }

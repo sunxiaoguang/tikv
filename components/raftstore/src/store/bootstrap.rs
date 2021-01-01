@@ -6,7 +6,7 @@ use super::peer_storage::{
 use super::util::new_peer;
 use crate::Result;
 use engine_traits::{Engines, KvEngine, Mutable, RaftEngine, WriteBatch};
-use engine_traits::{CF_DEFAULT, CF_RAFT};
+use engine_traits::{CF_DEFAULT, CF_RAFT, CF_RAW_DEFAULT};
 
 use kvproto::metapb;
 use kvproto::raft_serverpb::{RaftLocalState, RegionLocalState, StoreIdent};
@@ -52,7 +52,9 @@ where
 {
     let mut ident = StoreIdent::default();
 
-    if !is_range_empty(&engines.kv, CF_DEFAULT, keys::MIN_KEY, keys::MAX_KEY)? {
+    if !is_range_empty(&engines.kv, CF_DEFAULT, keys::MIN_KEY, keys::MAX_KEY)?
+        || !is_range_empty(&engines.kv, CF_RAW_DEFAULT, keys::MIN_KEY, keys::MAX_KEY)?
+    {
         return Err(box_err!("kv store is not empty and has already had data."));
     }
 
@@ -132,7 +134,7 @@ mod tests {
         let kv_engine = engine_test::kv::new_engine(
             path.path().to_str().unwrap(),
             None,
-            &[CF_DEFAULT, CF_RAFT],
+            &[CF_DEFAULT, CF_RAW_DEFAULT, CF_RAFT],
             None,
         )
         .unwrap();

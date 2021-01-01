@@ -973,6 +973,9 @@ pub mod tests {
                 engine_traits::CF_DEFAULT,
                 engine_traits::CF_LOCK,
                 engine_traits::CF_WRITE,
+                engine_traits::CF_RAW_DEFAULT,
+                engine_traits::CF_RAW_LOCK,
+                engine_traits::CF_RAW_WRITE,
             ])
             .build()
             .unwrap();

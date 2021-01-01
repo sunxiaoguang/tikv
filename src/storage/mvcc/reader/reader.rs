@@ -519,7 +519,9 @@ mod tests {
     use engine_rocks::raw_util::CFOptions;
     use engine_rocks::{Compat, RocksSnapshot};
     use engine_traits::{Mutable, MvccPropertiesExt, WriteBatch, WriteBatchExt};
-    use engine_traits::{ALL_CFS, CF_DEFAULT, CF_LOCK, CF_RAFT, CF_WRITE};
+    use engine_traits::{
+        ALL_CFS, CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE,
+    };
     use kvproto::kvrpcpb::IsolationLevel;
     use kvproto::metapb::{Peer, Region};
     use raftstore::store::RegionSnapshot;
@@ -768,11 +770,15 @@ mod tests {
             let f = Box::new(MvccPropertiesCollectorFactory::default());
             cf_opts.add_table_properties_collector_factory("tikv.test-collector", f);
         }
+        let raw_cf_opts = cf_opts.clone();
         let cfs_opts = vec![
             CFOptions::new(CF_DEFAULT, ColumnFamilyOptions::new()),
             CFOptions::new(CF_RAFT, ColumnFamilyOptions::new()),
             CFOptions::new(CF_LOCK, ColumnFamilyOptions::new()),
             CFOptions::new(CF_WRITE, cf_opts),
+            CFOptions::new(CF_RAW_DEFAULT, ColumnFamilyOptions::new()),
+            CFOptions::new(CF_RAW_LOCK, ColumnFamilyOptions::new()),
+            CFOptions::new(CF_RAW_WRITE, raw_cf_opts),
         ];
         Arc::new(engine_rocks::raw_util::new_engine_opt(path, db_opts, cfs_opts).unwrap())
     }

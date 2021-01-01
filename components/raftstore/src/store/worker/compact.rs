@@ -253,7 +253,9 @@ mod tests {
     use engine_test::kv::KvTestEngine;
     use engine_test::kv::{new_engine, new_engine_opt};
     use engine_traits::{MiscExt, Mutable, SyncMutable, WriteBatch, WriteBatchExt};
-    use engine_traits::{CF_DEFAULT, CF_LOCK, CF_RAFT, CF_WRITE};
+    use engine_traits::{
+        CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE,
+    };
     use tempfile::Builder;
 
     use keys::data_key;
@@ -323,11 +325,15 @@ mod tests {
         let db_opts = DBOptions::new();
         let mut cf_opts = ColumnFamilyOptions::new();
         cf_opts.set_level_zero_file_num_compaction_trigger(8);
+        let raw_cf_opts = cf_opts.clone();
         let cfs_opts = vec![
             CFOptions::new(CF_DEFAULT, ColumnFamilyOptions::new()),
             CFOptions::new(CF_RAFT, ColumnFamilyOptions::new()),
             CFOptions::new(CF_LOCK, ColumnFamilyOptions::new()),
             CFOptions::new(CF_WRITE, cf_opts),
+            CFOptions::new(CF_RAW_DEFAULT, ColumnFamilyOptions::new()),
+            CFOptions::new(CF_RAW_LOCK, ColumnFamilyOptions::new()),
+            CFOptions::new(CF_RAW_WRITE, raw_cf_opts),
         ];
         new_engine_opt(path, db_opts, cfs_opts).unwrap()
     }

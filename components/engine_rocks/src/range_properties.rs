@@ -3,10 +3,33 @@
 use crate::engine::RocksEngine;
 use crate::properties::{get_range_entries_and_versions, RangeProperties};
 use engine_traits::{
-    MiscExt, Range, RangePropertiesExt, Result, TableProperties, TablePropertiesCollection,
-    TablePropertiesExt, CF_DEFAULT, CF_LOCK, CF_WRITE, LARGE_CFS,
+    CfName, MiscExt, Range, RangePropertiesExt, Result, TableProperties, TablePropertiesCollection,
+    TablePropertiesExt, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE,
+    LARGE_CFS,
 };
 use std::path::Path;
+
+fn get_cf_with_max_size(get_cf_size: impl Fn(CfName) -> Result<u64>) -> Result<CfName> {
+    let mut max_size = get_cf_size(CF_DEFAULT)?;
+    let mut max_cf = CF_DEFAULT;
+    let write_size = get_cf_size(CF_WRITE)?;
+    let raw_default_size = get_cf_size(CF_RAW_DEFAULT)?;
+    let raw_write_size = get_cf_size(CF_RAW_WRITE)?;
+    if write_size >= max_size {
+        max_cf = CF_WRITE;
+        max_size = write_size;
+    }
+    if raw_default_size >= max_size {
+        max_cf = CF_RAW_DEFAULT;
+        max_size = raw_default_size;
+    }
+    if raw_write_size >= max_size {
+        max_cf = CF_RAW_WRITE;
+        max_size = raw_write_size;
+    }
+    let _ = max_size;
+    return Ok(max_cf);
+}
 
 impl RangePropertiesExt for RocksEngine {
     fn get_range_approximate_keys(
@@ -161,6 +184,9 @@ impl RangePropertiesExt for RocksEngine {
             // CF_LOCK doesn't have RangeProperties until v4.0, so we swallow the error for
             // backward compatibility.
             (CF_LOCK, get_cf_size(CF_LOCK).unwrap_or(0)),
+            (CF_RAW_DEFAULT, box_try!(get_cf_size(CF_RAW_DEFAULT))),
+            (CF_RAW_WRITE, box_try!(get_cf_size(CF_RAW_WRITE))),
+            (CF_RAW_LOCK, box_try!(get_cf_size(CF_RAW_WRITE))),
         ];
 
         let total_size: u64 = cfs.iter().map(|(_, s)| s).sum();
@@ -278,18 +304,8 @@ impl RangePropertiesExt for RocksEngine {
         range: Range,
         region_id: u64,
     ) -> Result<Option<Vec<u8>>> {
-        let get_cf_size = |cf: &str| self.get_range_approximate_size_cf(cf, range, region_id, 0);
-
-        let default_cf_size = box_try!(get_cf_size(CF_DEFAULT));
-        let write_cf_size = box_try!(get_cf_size(CF_WRITE));
-
-        let middle_by_cf = if default_cf_size >= write_cf_size {
-            CF_DEFAULT
-        } else {
-            CF_WRITE
-        };
-
-        self.get_range_approximate_middle_cf(middle_by_cf, range, region_id)
+        let get_cf_size = |cf: CfName| self.get_range_approximate_size_cf(cf, range, region_id, 0);
+        self.get_range_approximate_middle_cf(get_cf_with_max_size(get_cf_size)?, range, region_id)
     }
 
     fn get_range_approximate_middle_cf(
@@ -323,17 +339,8 @@ impl RangePropertiesExt for RocksEngine {
     }
 
     fn divide_range(&self, range: Range, region_id: u64, parts: usize) -> Result<Vec<Vec<u8>>> {
-        let default_cf_size =
-            self.get_range_approximate_keys_cf(CF_DEFAULT, range, region_id, 0)?;
-        let write_cf_size = self.get_range_approximate_keys_cf(CF_WRITE, range, region_id, 0)?;
-
-        let cf = if default_cf_size >= write_cf_size {
-            CF_DEFAULT
-        } else {
-            CF_WRITE
-        };
-
-        self.divide_range_cf(cf, range, region_id, parts)
+        let get_cf_size = |cf: CfName| self.get_range_approximate_keys_cf(cf, range, region_id, 0);
+        self.divide_range_cf(get_cf_with_max_size(get_cf_size)?, range, region_id, parts)
     }
 
     fn divide_range_cf(

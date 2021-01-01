@@ -9,7 +9,10 @@ use tempfile::Builder;
 
 use engine_rocks::util::{self as rocks_util, RocksCFOptions};
 use engine_rocks::{RocksColumnFamilyOptions, RocksDBOptions};
-use engine_traits::{ColumnFamilyOptions, Engines, MetricsFlusher, CF_DEFAULT, CF_LOCK, CF_WRITE};
+use engine_traits::{
+    ColumnFamilyOptions, Engines, MetricsFlusher, MiscExt, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT,
+    CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE,
+};
 
 #[test]
 fn test_metrics_flusher() {
@@ -26,6 +29,9 @@ fn test_metrics_flusher() {
         RocksCFOptions::new(CF_DEFAULT, ColumnFamilyOptions::new()),
         RocksCFOptions::new(CF_LOCK, ColumnFamilyOptions::new()),
         RocksCFOptions::new(CF_WRITE, cf_opts),
+        RocksCFOptions::new(CF_RAW_DEFAULT, ColumnFamilyOptions::new()),
+        RocksCFOptions::new(CF_RAW_LOCK, ColumnFamilyOptions::new()),
+        RocksCFOptions::new(CF_RAW_WRITE, cf_opts),
     ];
     let engine =
         rocks_util::new_engine_opt(path.path().to_str().unwrap(), db_opt, cfs_opts).unwrap();

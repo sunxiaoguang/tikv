@@ -21,7 +21,8 @@ use concurrency_manager::ConcurrencyManager;
 use encryption::DataKeyManager;
 use engine_rocks::{encryption::get_env, RocksEngine};
 use engine_traits::{
-    compaction_job::CompactionJobInfo, Engines, MetricsFlusher, RaftEngine, CF_DEFAULT, CF_WRITE,
+    compaction_job::CompactionJobInfo, Engines, MetricsFlusher, RaftEngine, CF_DEFAULT,
+    CF_RAW_DEFAULT, CF_RAW_WRITE, CF_WRITE,
 };
 use fs2::FileExt;
 use futures::executor::block_on;
@@ -386,7 +387,7 @@ impl<ER: RaftEngine> TiKVServer<ER> {
             // When calculating region size, we only consider write and default
             // column families.
             let cf = info.cf_name();
-            if cf != CF_WRITE && cf != CF_DEFAULT {
+            if cf != CF_WRITE && cf != CF_DEFAULT && cf != CF_RAW_WRITE && cf != CF_RAW_DEFAULT {
                 return false;
             }
             // Compactions in level 0 and level 1 are very frequently.
