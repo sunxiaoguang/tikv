@@ -9,8 +9,7 @@ use std::sync::{Arc, RwLock};
 
 use engine_rocks::RocksEngine;
 use engine_traits::{
-    CfName, IterOptions, ReadOptions, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_RAW_LOCK,
-    CF_RAW_WRITE, CF_WRITE,
+    CfName, IterOptions, ReadOptions, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_WRITE,
 };
 use kvproto::kvrpcpb::Context;
 use txn_types::{Key, Value};
@@ -68,14 +67,7 @@ impl BTreeEngine {
 
 impl Default for BTreeEngine {
     fn default() -> Self {
-        let cfs = &[
-            CF_WRITE,
-            CF_DEFAULT,
-            CF_LOCK,
-            CF_RAW_WRITE,
-            CF_RAW_DEFAULT,
-            CF_RAW_LOCK,
-        ];
+        let cfs = &[CF_WRITE, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT];
         Self::new(cfs)
     }
 }

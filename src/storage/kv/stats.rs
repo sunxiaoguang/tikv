@@ -1,7 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use crate::server::metrics::{GcKeysCF, GcKeysDetail};
-use engine_traits::{CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE};
+use engine_traits::{CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_WRITE};
 use kvproto::kvrpcpb::{ScanDetail, ScanDetailV2, ScanInfo};
 pub use raftstore::store::{FlowStatistics, FlowStatsReporter};
 
@@ -110,31 +110,25 @@ pub struct Statistics {
     pub lock: CfStatistics,
     pub write: CfStatistics,
     pub data: CfStatistics,
-    pub raw_lock: CfStatistics,
-    pub raw_write: CfStatistics,
     pub raw_data: CfStatistics,
 }
 
 impl Statistics {
-    pub fn details(&self) -> [(&'static str, [(&'static str, usize); 11]); 6] {
+    pub fn details(&self) -> [(&'static str, [(&'static str, usize); 11]); 4] {
         [
             (CF_DEFAULT, self.data.details()),
             (CF_LOCK, self.lock.details()),
             (CF_WRITE, self.write.details()),
             (CF_RAW_DEFAULT, self.raw_data.details()),
-            (CF_RAW_LOCK, self.raw_lock.details()),
-            (CF_RAW_WRITE, self.raw_write.details()),
         ]
     }
 
-    pub fn details_enum(&self) -> [(GcKeysCF, [(GcKeysDetail, usize); 11]); 6] {
+    pub fn details_enum(&self) -> [(GcKeysCF, [(GcKeysDetail, usize); 11]); 4] {
         [
             (GcKeysCF::default, self.data.details_enum()),
             (GcKeysCF::lock, self.lock.details_enum()),
             (GcKeysCF::write, self.write.details_enum()),
             (GcKeysCF::raw_default, self.raw_data.details_enum()),
-            (GcKeysCF::raw_lock, self.raw_lock.details_enum()),
-            (GcKeysCF::raw_write, self.raw_write.details_enum()),
         ]
     }
 
@@ -142,8 +136,6 @@ impl Statistics {
         self.lock.add(&other.lock);
         self.write.add(&other.write);
         self.data.add(&other.data);
-        self.raw_lock.add(&other.raw_lock);
-        self.raw_write.add(&other.raw_write);
         self.raw_data.add(&other.raw_data);
     }
 
@@ -166,8 +158,6 @@ impl Statistics {
             CF_LOCK => &mut self.lock,
             CF_WRITE => &mut self.write,
             CF_RAW_DEFAULT => &mut self.raw_data,
-            CF_RAW_LOCK => &mut self.raw_lock,
-            CF_RAW_WRITE => &mut self.raw_write,
             _ => unreachable!(),
         }
     }

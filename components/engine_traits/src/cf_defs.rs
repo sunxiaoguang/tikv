@@ -9,41 +9,12 @@ pub const CF_WRITE: CfName = "write";
 pub const CF_RAFT: CfName = "raft";
 pub const CF_VER_DEFAULT: CfName = "ver_default";
 pub const CF_RAW_DEFAULT: CfName = "raw_default";
-pub const CF_RAW_LOCK: CfName = "raw_lock";
-pub const CF_RAW_WRITE: CfName = "raw_write";
 // Cfs that should be very large generally.
-pub const LARGE_CFS: &[CfName] = &[
-    CF_DEFAULT,
-    CF_LOCK,
-    CF_WRITE,
-    CF_RAW_DEFAULT,
-    CF_RAW_LOCK,
-    CF_RAW_WRITE,
-];
-pub const ALL_CFS: &[CfName] = &[
-    CF_DEFAULT,
-    CF_LOCK,
-    CF_WRITE,
-    CF_RAFT,
-    CF_RAW_DEFAULT,
-    CF_RAW_LOCK,
-    CF_RAW_WRITE,
-];
+pub const LARGE_CFS: &[CfName] = &[CF_DEFAULT, CF_LOCK, CF_WRITE, CF_RAW_DEFAULT];
+pub const ALL_CFS: &[CfName] = &[CF_DEFAULT, CF_LOCK, CF_WRITE, CF_RAFT, CF_RAW_DEFAULT];
 pub const TXN_DATA_CFS: &[CfName] = &[CF_DEFAULT, CF_LOCK, CF_WRITE];
-pub const RAW_DATA_CFS: &[CfName] = &[CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE];
-pub const ALL_DATA_CFS: &[CfName] = &[
-    CF_DEFAULT,
-    CF_LOCK,
-    CF_WRITE,
-    CF_RAW_DEFAULT,
-    CF_RAW_LOCK,
-    CF_RAW_WRITE,
-];
-const RAW_DATA_CFS_MAPPING: &[(CfName, CfName)] = &[
-    (CF_DEFAULT, CF_RAW_DEFAULT),
-    (CF_LOCK, CF_RAW_LOCK),
-    (CF_WRITE, CF_RAW_WRITE),
-];
+pub const RAW_DATA_CFS: &[CfName] = &[CF_RAW_DEFAULT];
+pub const ALL_DATA_CFS: &[CfName] = &[CF_DEFAULT, CF_LOCK, CF_WRITE, CF_RAW_DEFAULT];
 static SAFE_RAWKV_CF: AtomicBool = AtomicBool::new(false);
 
 pub fn name_to_cf(name: &str) -> Option<CfName> {
@@ -63,9 +34,9 @@ fn name_to_rawkv_cf_unsafe(cf: &str) -> Option<CfName> {
     if cf.is_empty() {
         return Some(CF_DEFAULT);
     }
-    for c in RAW_DATA_CFS_MAPPING {
-        if cf == c.0 {
-            return Some(c.0);
+    for c in TXN_DATA_CFS {
+        if cf == *c {
+            return Some(c);
         }
     }
 
@@ -73,13 +44,8 @@ fn name_to_rawkv_cf_unsafe(cf: &str) -> Option<CfName> {
 }
 
 fn name_to_rawkv_cf_safe(cf: &str) -> Option<CfName> {
-    if cf.is_empty() {
+    if cf.is_empty() || cf == CF_DEFAULT {
         return Some(CF_RAW_DEFAULT);
-    }
-    for c in RAW_DATA_CFS_MAPPING {
-        if cf == c.0 {
-            return Some(c.1);
-        }
     }
 
     None
@@ -107,8 +73,6 @@ mod tests {
         set_safe_rawkv(true);
         assert_eq!(name_to_rawkv_cf(""), CF_RAW_DEFAULT);
         assert_eq!(name_to_rawkv_cf(CF_DEFAULT), CF_RAW_DEFAULT);
-        assert_eq!(name_to_rawkv_cf(CF_LOCK), CF_RAW_LOCK);
-        assert_eq!(name_to_rawkv_cf(CF_WRITE), CF_RAW_WRITE);
         assert_eq!(name_to_rawkv_cf(""), CF_DEFAULT);
         assert_eq!(name_to_rawkv_cf(CF_DEFAULT), CF_DEFAULT);
         assert_eq!(name_to_rawkv_cf(CF_LOCK), CF_LOCK);

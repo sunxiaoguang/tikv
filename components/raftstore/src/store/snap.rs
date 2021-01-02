@@ -15,9 +15,7 @@ use std::{error, result, str, thread, time, u64};
 use encryption::{
     create_aes_ctr_crypter, encryption_method_from_db_encryption_method, DataKeyManager, Iv,
 };
-use engine_traits::{
-    CfName, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE,
-};
+use engine_traits::{CfName, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_WRITE};
 use engine_traits::{EncryptionKeyManager, KvEngine};
 use futures::executor::block_on;
 use futures_util::io::{AllowStdIo, AsyncWriteExt};
@@ -50,21 +48,12 @@ use crate::{Error as RaftStoreError, Result as RaftStoreResult};
 pub mod snap_io;
 
 // Data in CF_RAFT should be excluded for a snapshot.
-pub const SNAPSHOT_CFS: &[CfName] = &[
-    CF_DEFAULT,
-    CF_LOCK,
-    CF_WRITE,
-    CF_RAW_DEFAULT,
-    CF_RAW_LOCK,
-    CF_RAW_WRITE,
-];
+pub const SNAPSHOT_CFS: &[CfName] = &[CF_DEFAULT, CF_LOCK, CF_WRITE, CF_RAW_DEFAULT];
 pub const SNAPSHOT_CFS_ENUM_PAIR: &[(CfNames, CfName)] = &[
     (CfNames::default, CF_DEFAULT),
     (CfNames::lock, CF_LOCK),
     (CfNames::write, CF_WRITE),
     (CfNames::raw_default, CF_RAW_DEFAULT),
-    (CfNames::raw_lock, CF_RAW_LOCK),
-    (CfNames::raw_write, CF_RAW_WRITE),
 ];
 pub const SNAPSHOT_VERSION: u64 = 2;
 
@@ -1553,9 +1542,7 @@ pub mod tests {
     use engine_traits::SyncMutable;
     use engine_traits::{ExternalSstFileInfo, SstExt, SstWriter, SstWriterBuilder};
     use engine_traits::{KvEngine, Snapshot as EngineSnapshot};
-    use engine_traits::{
-        ALL_CFS, CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE,
-    };
+    use engine_traits::{ALL_CFS, CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT, CF_WRITE};
     use kvproto::metapb::{Peer, Region};
     use kvproto::raft_serverpb::{
         RaftApplyState, RaftSnapshotData, RegionLocalState, SnapshotMeta,
@@ -1879,15 +1866,7 @@ pub mod tests {
             .unwrap();
         let dst_db_path = dst_db_dir.path().to_str().unwrap();
         // Change arbitrarily the cf order of ALL_CFS at destination db.
-        let dst_cfs = [
-            CF_WRITE,
-            CF_DEFAULT,
-            CF_LOCK,
-            CF_RAFT,
-            CF_RAW_DEFAULT,
-            CF_RAW_LOCK,
-            CF_RAW_WRITE,
-        ];
+        let dst_cfs = [CF_WRITE, CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT];
         let dst_db = engine_test::kv::new_engine(dst_db_path, db_opt, &dst_cfs, None).unwrap();
         let options = ApplyOptions {
             db: dst_db.clone(),

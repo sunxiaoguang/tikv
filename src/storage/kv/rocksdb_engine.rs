@@ -11,8 +11,7 @@ use engine_rocks::raw::{ColumnFamilyOptions, DBIterator, SeekKey as DBSeekKey, D
 use engine_rocks::raw_util::CFOptions;
 use engine_rocks::{RocksEngine as BaseRocksEngine, RocksEngineIterator};
 use engine_traits::{
-    CfName, CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE,
-    CF_VER_DEFAULT, CF_WRITE,
+    CfName, CF_DEFAULT, CF_LOCK, CF_RAFT, CF_RAW_DEFAULT, CF_VER_DEFAULT, CF_WRITE,
 };
 use engine_traits::{
     Engines, IterOptions, Iterable, Iterator, KvEngine, Mutable, Peekable, ReadOptions, SeekKey,
@@ -225,13 +224,6 @@ impl TestEngineBuilder {
                 CF_RAW_DEFAULT => CFOptions::new(
                     CF_RAW_DEFAULT,
                     cfg_rocksdb.raw_defaultcf.build_opt(&cache, None),
-                ),
-                CF_RAW_LOCK => {
-                    CFOptions::new(CF_RAW_LOCK, cfg_rocksdb.raw_lockcf.build_opt(&cache))
-                }
-                CF_RAW_WRITE => CFOptions::new(
-                    CF_RAW_WRITE,
-                    cfg_rocksdb.raw_writecf.build_opt(&cache, None),
                 ),
                 _ => CFOptions::new(*cf, ColumnFamilyOptions::new()),
             })

@@ -4,8 +4,7 @@ use crate::engine::RocksEngine;
 use crate::properties::{get_range_entries_and_versions, RangeProperties};
 use engine_traits::{
     CfName, MiscExt, Range, RangePropertiesExt, Result, TableProperties, TablePropertiesCollection,
-    TablePropertiesExt, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_RAW_LOCK, CF_RAW_WRITE, CF_WRITE,
-    LARGE_CFS,
+    TablePropertiesExt, CF_DEFAULT, CF_LOCK, CF_RAW_DEFAULT, CF_WRITE, LARGE_CFS,
 };
 use std::path::Path;
 
@@ -14,7 +13,6 @@ fn get_cf_with_max_size(get_cf_size: impl Fn(CfName) -> Result<u64>) -> Result<C
     let mut max_cf = CF_DEFAULT;
     let write_size = get_cf_size(CF_WRITE)?;
     let raw_default_size = get_cf_size(CF_RAW_DEFAULT)?;
-    let raw_write_size = get_cf_size(CF_RAW_WRITE)?;
     if write_size >= max_size {
         max_cf = CF_WRITE;
         max_size = write_size;
@@ -22,10 +20,6 @@ fn get_cf_with_max_size(get_cf_size: impl Fn(CfName) -> Result<u64>) -> Result<C
     if raw_default_size >= max_size {
         max_cf = CF_RAW_DEFAULT;
         max_size = raw_default_size;
-    }
-    if raw_write_size >= max_size {
-        max_cf = CF_RAW_WRITE;
-        max_size = raw_write_size;
     }
     let _ = max_size;
     return Ok(max_cf);
@@ -185,8 +179,6 @@ impl RangePropertiesExt for RocksEngine {
             // backward compatibility.
             (CF_LOCK, get_cf_size(CF_LOCK).unwrap_or(0)),
             (CF_RAW_DEFAULT, box_try!(get_cf_size(CF_RAW_DEFAULT))),
-            (CF_RAW_WRITE, box_try!(get_cf_size(CF_RAW_WRITE))),
-            (CF_RAW_LOCK, box_try!(get_cf_size(CF_RAW_WRITE))),
         ];
 
         let total_size: u64 = cfs.iter().map(|(_, s)| s).sum();

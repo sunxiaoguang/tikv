@@ -2272,11 +2272,6 @@ mod tests {
                     CF_RAW_DEFAULT,
                     cfg_rocksdb.raw_defaultcf.build_opt(&cache, None),
                 ),
-                CFOptions::new(CF_RAW_LOCK, cfg_rocksdb.raw_lockcf.build_opt(&cache)),
-                CFOptions::new(
-                    CF_RAW_WRITE,
-                    cfg_rocksdb.raw_writecf.build_opt(&cache, None),
-                ),
             ];
             RocksEngine::new(&path, &cfs, Some(cfs_opts), cache.is_some())
         }
